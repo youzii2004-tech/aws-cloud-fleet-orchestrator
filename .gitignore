@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.env.*
+venv/
+env/
+ENV/
+
+# AWS credentials
+.aws/
+*.pem
+*.key
+
+# Fleet live states & logs
+*.log
+fleet_config.yaml
+!config/fleet_config.example.yaml
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS artifacts
+.DS_Store
+Thumbs.db

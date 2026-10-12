@@ -1,0 +1,43 @@
+fleet_name: "Multi-Region-Compute-Fleet"
+
+workers:
+  - name: "Worker-01-Stockholm"
+    region: "eu-north-1"
+    instance_id: "i-0f0d7f21cf4f7fc50"
+    instance_type: "c6i.xlarge"
+    auto_stop: true
+
+  - name: "Worker-02-Frankfurt"
+    region: "eu-central-1"
+    instance_id: "i-0f0d7b4405d3aa376"
+    instance_type: "c6i.xlarge"
+    auto_stop: true
+
+  - name: "Worker-03-Dublin"
+    region: "eu-west-1"
+    instance_id: "i-01b1c918a35f35675"
+    instance_type: "c6i.xlarge"
+    auto_stop: true
+
+  - name: "Worker-04-Ohio"
+    region: "us-east-2"
+    instance_id: "i-099dc66a8045d3f75"
+    instance_type: "c6i.xlarge"
+    auto_stop: true
+
+  - name: "Worker-05-Oregon"
+    region: "us-west-2"
+    instance_id: "i-0d5c018df8b43dd7f"
+    instance_type: "c6i.xlarge"
+    auto_stop: true
+
+storage:
+  bucket_name: "cloud-fleet-artifacts-lake"
+  artifact_prefix: "output/"
+  reference_prefix: "references/"
+
+execution:
+  max_parallel_workers: 5
+  command_timeout_sec: 900
+  poll_interval_sec: 2.5
+  retry_attempts: 2
