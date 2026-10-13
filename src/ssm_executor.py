@@ -71,9 +71,11 @@ class SSMExecutor:
 
         logger.info(f"[{worker.name}] Command dispatched. Command ID: {command_id}. Polling execution...")
 
-        # Poll loop
+        # Poll loop with capped exponential backoff
+        delay = 1.0
         while time.time() - start_time < timeout_sec:
-            time.sleep(3.0)
+            time.sleep(delay)
+            delay = min(delay * 2, 15.0)
             try:
                 inv = ssm.get_command_invocation(
                     CommandId=command_id,

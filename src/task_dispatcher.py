@@ -5,6 +5,7 @@ enforcing pre-flight health checks, SSM command execution, artifact collection, 
 """
 import concurrent.futures
 import logging
+import threading
 import time
 from typing import List, Dict, Any, Optional
 from .config import FleetConfig, WorkerNode
@@ -31,6 +32,30 @@ class TaskDispatcher:
             bucket_name=config.storage.bucket_name,
             aws_profile=aws_profile
         )
+        # Per-instance reference counting: an instance is powered on by the first
+        # task that needs it and stopped only when the last task releases it.
+        self._inst_guard = threading.Lock()
+        self._inst_locks: Dict[str, threading.Lock] = {}
+        self._inst_refs: Dict[str, int] = {}
+
+    def _inst_lock(self, instance_id: str) -> threading.Lock:
+        with self._inst_guard:
+            return self._inst_locks.setdefault(instance_id, threading.Lock())
+
+    def _acquire_worker(self, worker: WorkerNode) -> bool:
+        with self._inst_lock(worker.instance_id):
+            self._inst_refs[worker.instance_id] = self._inst_refs.get(worker.instance_id, 0) + 1
+            return self.fleet_manager.start_worker(worker, wait_for_online=True)
+
+    def _release_worker(self, worker: WorkerNode) -> bool:
+        """Drops a reference; stops the instance when the last user is done. Returns False if the stop failed."""
+        with self._inst_lock(worker.instance_id):
+            remaining = self._inst_refs.get(worker.instance_id, 1) - 1
+            self._inst_refs[worker.instance_id] = remaining
+            if remaining > 0 or not worker.auto_stop:
+                return True
+            logger.info(f"[{worker.name}] Last task finished. Powering down worker...")
+            return self.fleet_manager.stop_worker(worker)
 
     def _execute_worker_pipeline(self, worker: WorkerNode, task: FleetTask) -> Dict[str, Any]:
         """Lifecycle workflow for a single worker node."""
@@ -43,12 +68,15 @@ class TaskDispatcher:
             "instance_id": worker.instance_id,
             "status": "Failed",
             "execution_result": None,
-            "elapsed_sec": 0.0
+            "elapsed_sec": 0.0,
+            "stop_failed": False
         }
 
+        acquired = False
         try:
             # 1. Power On & Verify SSM Readiness
-            online = self.fleet_manager.start_worker(worker, wait_for_online=True)
+            acquired = True
+            online = self._acquire_worker(worker)
             if not online:
                 logger.error(f"[{worker_name}] Worker failed to report online. Aborting task {task.task_id}.")
                 return result_payload
@@ -67,10 +95,13 @@ class TaskDispatcher:
             logger.error(f"[{worker_name}] Unhandled exception in task {task.task_id}: {e}")
             result_payload["status"] = "Error"
         finally:
-            # 3. Enforce Zero-Idle Cost Policy: Stop instance unless auto_stop=False
-            if worker.auto_stop:
-                logger.info(f"[{worker_name}] Enforcing Zero-Idle policy. Powering down worker...")
-                self.fleet_manager.stop_worker(worker)
+            # 3. Release the worker; the last releaser stops it (unless auto_stop=False)
+            if acquired and not self._release_worker(worker):
+                result_payload["stop_failed"] = True
+                logger.critical(
+                    f"[{worker_name}] FAILED TO STOP {worker.instance_id} in {worker.region}; "
+                    f"instance may still be running and billing. Stop it manually."
+                )
             result_payload["elapsed_sec"] = time.time() - start_ts
 
         return result_payload
@@ -88,7 +119,12 @@ class TaskDispatcher:
             future_to_task = {}
             for i, task in enumerate(tasks):
                 # Bind to specific worker if requested, otherwise round-robin
-                worker = next((w for w in workers if w.name == task.target_worker_name), None) if task.target_worker_name else workers[i % len(workers)]
+                if task.target_worker_name:
+                    worker = next((w for w in workers if w.name == task.target_worker_name), None)
+                    if worker is None:
+                        raise ValueError(f"Task {task.task_id} targets unknown worker '{task.target_worker_name}'.")
+                else:
+                    worker = workers[i % len(workers)]
                 fut = executor.submit(self._execute_worker_pipeline, worker, task)
                 future_to_task[fut] = task
 
