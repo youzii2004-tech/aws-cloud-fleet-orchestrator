@@ -48,13 +48,14 @@
 Cloud compute waste occurs when worker instances remain in `running` state while idling. The orchestrator enforces an on-demand power state machine:
 - Instances boot only when tasks enter the execution queue.
 - Systems Manager ping status is verified (`PingStatus == "Online"`).
-- Upon task termination (success or failure), instances are immediately transitioned back to `stopped` state.
-- **Result:** $0.00 idle compute spend, paying exclusively for active execution seconds.
+- Upon task termination (success or failure), instances are transitioned back to `stopped` state. When several tasks share one worker, it is reference-counted and stopped only after the last task finishes.
+- Stop calls are retried; if they still fail, the result carries `stop_failed: true` and a CRITICAL log is emitted, since the instance may still be billing.
+- **Result:** no idle *compute* charges. Stopped instances still incur EBS volume (and any Elastic IP) costs.
 
 ### 2. Portless Remote Execution via AWS Systems Manager (SSM)
 Eliminates traditional SSH access, bastion hosts, and open inbound ports (port 22):
 - Commands are dispatched securely over the AWS control plane using `AWS-RunShellScript`.
-- Exponential backoff polling tracks invocation lifecycle (`Pending`, `Executing`, `Success`, `Failed`).
+- Polling with capped exponential backoff (1s up to 15s) tracks invocation lifecycle (`Pending`, `Executing`, `Success`, `Failed`).
 - Full stdout and stderr capture with structured execution telemetry.
 
 ### 3. Multi-Region Parallel Dispatch

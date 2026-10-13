@@ -26,3 +26,19 @@ def test_ssm_executor_success():
     assert res.exit_code == 0
     assert "Pipeline finished" in res.stdout
     assert res.command_id == "cmd-abc-123"
+
+
+@patch("src.ssm_executor.time.sleep")
+def test_ssm_poll_backs_off(sleep):
+    worker = WorkerNode(name="W", region="eu-north-1", instance_id="i-1")
+    ssm = MagicMock()
+    ssm.send_command.return_value = {"Command": {"CommandId": "c"}}
+    ssm.get_command_invocation.side_effect = [
+        {"Status": "InProgress"}, {"Status": "InProgress"}, {"Status": "InProgress"},
+        {"Status": "Success", "ResponseCode": 0},
+    ]
+    ex = SSMExecutor()
+    ex._clients["eu-north-1"] = ssm
+    assert ex.run_command(worker, ["x"], timeout_sec=60).is_success
+    delays = [c.args[0] for c in sleep.call_args_list]
+    assert delays == [1.0, 2.0, 4.0, 8.0]
